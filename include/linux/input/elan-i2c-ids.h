@@ -77,6 +77,7 @@ static const struct acpi_device_id elan_acpi_id[] = {
 	{ "ELAN0636", 0 }, /* Lenovo V1415-Dali */
 	{ "ELAN0637", 0 }, /* Lenovo V1415-IGLR */
 	{ "ELAN1000", 0 },
+	{ "ELAN1205", 0 }, /* Asus ROG Zephyrus G15 GA502IV */
 	{ }
 };
 
