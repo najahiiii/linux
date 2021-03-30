@@ -86,11 +86,6 @@ static int gpu_i2c_check_status(struct gpu_i2c_dev *i2cd)
 				 (val & I2C_MST_CNTL_STATUS) != I2C_MST_CNTL_STATUS_BUS_BUSY,
 				 500, 1000 * USEC_PER_MSEC);
 
-	if (ret) {
-		dev_err(i2cd->dev, "i2c timeout error %x\n", val);
-		return -ETIMEDOUT;
-	}
-
 	val = readl(i2cd->regs + I2C_MST_CNTL);
 	switch (val & I2C_MST_CNTL_STATUS) {
 	case I2C_MST_CNTL_STATUS_OKAY:
@@ -99,6 +94,8 @@ static int gpu_i2c_check_status(struct gpu_i2c_dev *i2cd)
 		return -ENXIO;
 	case I2C_MST_CNTL_STATUS_TIMEOUT:
 		return -ETIMEDOUT;
+	case I2C_MST_CNTL_STATUS_BUS_BUSY:
+		return -EBUSY;
 	default:
 		return 0;
 	}

@@ -252,7 +252,8 @@ static int ccg_read(struct ucsi_ccg *uc, u16 rab, u8 *data, u32 len)
 		put_unaligned_le16(rab, buf);
 		status = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
 		if (status < 0) {
-			dev_err(uc->dev, "i2c_transfer failed %d\n", status);
+			if (uc->fw_build != CCG_FW_BUILD_NVIDIA || status != -EBUSY)
+				dev_err(uc->dev, "i2c_transfer failed %d\n", status);
 			pm_runtime_put_sync(uc->dev);
 			return status;
 		}
@@ -289,7 +290,8 @@ static int ccg_write(struct ucsi_ccg *uc, u16 rab, const u8 *data, u32 len)
 	pm_runtime_get_sync(uc->dev);
 	status = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
 	if (status < 0) {
-		dev_err(uc->dev, "i2c_transfer failed %d\n", status);
+		if (uc->fw_build != CCG_FW_BUILD_NVIDIA || status != -EBUSY)
+			dev_err(uc->dev, "i2c_transfer failed %d\n", status);
 		pm_runtime_put_sync(uc->dev);
 		kfree(buf);
 		return status;
@@ -1354,7 +1356,10 @@ static int ucsi_ccg_probe(struct i2c_client *client,
 	/* reset ccg device and initialize ucsi */
 	status = ucsi_ccg_init(uc);
 	if (status < 0) {
-		dev_err(uc->dev, "ucsi_ccg_init failed - %d\n", status);
+		if (uc->fw_build == CCG_FW_BUILD_NVIDIA && status == -EBUSY)
+			dev_info(uc->dev, "USB typec not present\n");
+		else
+			dev_err(uc->dev, "ucsi_ccg_init failed - %d\n", status);
 		return status;
 	}
 
