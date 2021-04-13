@@ -4878,7 +4878,9 @@ intel_dp_get_dpcd(struct intel_dp *intel_dp)
 {
 	int ret;
 
-	if (intel_dp_init_lttpr_and_dprx_caps(intel_dp) < 0)
+	intel_dp_lttpr_init(intel_dp);
+
+	if (drm_dp_read_dpcd_caps(&intel_dp->aux, intel_dp->dpcd))
 		return false;
 
 	/*
