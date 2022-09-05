@@ -55,6 +55,7 @@
 #include <linux/rcupdate.h>
 #include <linux/kprobes.h>
 #include <linux/lockdep.h>
+#include <linux/sched/debug.h>
 
 #include <asm/sections.h>
 
@@ -6509,6 +6510,37 @@ void debug_show_all_locks(void)
 	pr_warn("=============================================\n\n");
 }
 EXPORT_SYMBOL_GPL(debug_show_all_locks);
+
+void debug_show_all_lock_holders(void)
+{
+	struct task_struct *g, *p;
+
+	if (unlikely(!debug_locks)) {
+		pr_warn("INFO: lockdep is turned off.\n");
+		return;
+	}
+	pr_warn("\nShowing all threads with locks held in the system:\n");
+
+	rcu_read_lock();
+	for_each_process_thread(g, p) {
+		if (!p->lockdep_depth)
+			continue;
+		/*
+		 * Assuming that the caller of this function is in a process
+		 * context without any locks held, skip current thread which is
+		 * holding only RCU read lock.
+		 */
+		if (p == current)
+			continue;
+		sched_show_task(p);
+		lockdep_print_held_locks(p);
+		touch_nmi_watchdog();
+		touch_all_softlockup_watchdogs();
+	}
+	rcu_read_unlock();
+	pr_warn("\n");
+	pr_warn("=============================================\n\n");
+}
 #endif
 
 /*
