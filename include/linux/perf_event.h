@@ -36,6 +36,7 @@ struct perf_guest_info_callbacks {
 };
 
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
+#include <linux/rhashtable-types.h>
 #include <asm/hw_breakpoint.h>
 #endif
 
@@ -178,7 +179,7 @@ struct hw_perf_event {
 			 * creation and event initalization.
 			 */
 			struct arch_hw_breakpoint	info;
-			struct list_head		bp_list;
+			struct rhlist_head		bp_list;
 		};
 #endif
 		struct { /* amd_iommu */
@@ -1007,18 +1008,20 @@ struct perf_sample_data {
 	 * Fields set by perf_sample_data_init(), group so as to
 	 * minimize the cachelines touched.
 	 */
+	u64				sample_flags;
 	u64				addr;
 	struct perf_raw_record		*raw;
-	struct perf_branch_stack	*br_stack;
 	u64				period;
-	union perf_sample_weight	weight;
-	u64				txn;
-	union  perf_mem_data_src	data_src;
 
 	/*
 	 * The other fields, optionally {set,used} by
 	 * perf_{prepare,output}_sample().
 	 */
+	struct perf_branch_stack	*br_stack;
+	union perf_sample_weight	weight;
+	union  perf_mem_data_src	data_src;
+	u64				txn;
+
 	u64				type;
 	u64				ip;
 	struct {
@@ -1056,13 +1059,10 @@ static inline void perf_sample_data_init(struct perf_sample_data *data,
 					 u64 addr, u64 period)
 {
 	/* remaining struct members initialized in perf_prepare_sample() */
+	data->sample_flags = 0;
 	data->addr = addr;
 	data->raw  = NULL;
-	data->br_stack = NULL;
 	data->period = period;
-	data->weight.full = 0;
-	data->data_src.val = PERF_MEM_NA;
-	data->txn = 0;
 }
 
 /*
@@ -1078,6 +1078,7 @@ static inline void perf_clear_branch_entry_bitfields(struct perf_branch_entry *b
 	br->abort = 0;
 	br->cycles = 0;
 	br->type = 0;
+	br->spec = PERF_BR_SPEC_NA;
 	br->reserved = 0;
 }
 
