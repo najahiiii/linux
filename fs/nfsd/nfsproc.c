@@ -185,6 +185,7 @@ nfsd_proc_read(struct svc_rqst *rqstp)
 		argp->count, argp->offset);
 
 	argp->count = min_t(u32, argp->count, NFSSVC_MAXBLKSIZE_V2);
+	argp->count = min_t(u32, argp->count, rqstp->rq_res.buflen);
 
 	v = 0;
 	len = argp->count;
@@ -390,9 +391,8 @@ nfsd_proc_create(struct svc_rqst *rqstp)
 	resp->status = nfs_ok;
 	if (!inode) {
 		/* File doesn't exist. Create it and set attrs */
-		resp->status = nfsd_create_locked(rqstp, dirfhp, argp->name,
-						  argp->len, &attrs, type, rdev,
-						  newfhp);
+		resp->status = nfsd_create_locked(rqstp, dirfhp, &attrs, type,
+						  rdev, newfhp);
 	} else if (type == S_IFREG) {
 		dprintk("nfsd:   existing %s, valid=%x, size=%ld\n",
 			argp->name, attr->ia_valid, (long) attr->ia_size);
@@ -567,12 +567,11 @@ static void nfsd_init_dirlist_pages(struct svc_rqst *rqstp,
 	struct xdr_buf *buf = &resp->dirlist;
 	struct xdr_stream *xdr = &resp->xdr;
 
-	count = clamp(count, (u32)(XDR_UNIT * 2), svc_max_payload(rqstp));
-
 	memset(buf, 0, sizeof(*buf));
 
 	/* Reserve room for the NULL ptr & eof flag (-2 words) */
-	buf->buflen = count - XDR_UNIT * 2;
+	buf->buflen = clamp(count, (u32)(XDR_UNIT * 2), (u32)PAGE_SIZE);
+	buf->buflen -= XDR_UNIT * 2;
 	buf->pages = rqstp->rq_next_page;
 	rqstp->rq_next_page++;
 
