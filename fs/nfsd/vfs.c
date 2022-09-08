@@ -1809,7 +1809,7 @@ struct readdir_data {
 	int		full;
 };
 
-static int nfsd_buffered_filldir(struct dir_context *ctx, const char *name,
+static bool nfsd_buffered_filldir(struct dir_context *ctx, const char *name,
 				 int namlen, loff_t offset, u64 ino,
 				 unsigned int d_type)
 {
@@ -1821,7 +1821,7 @@ static int nfsd_buffered_filldir(struct dir_context *ctx, const char *name,
 	reclen = ALIGN(sizeof(struct buffered_dirent) + namlen, sizeof(u64));
 	if (buf->used + reclen > PAGE_SIZE) {
 		buf->full = 1;
-		return -EINVAL;
+		return false;
 	}
 
 	de->namlen = namlen;
@@ -1831,7 +1831,7 @@ static int nfsd_buffered_filldir(struct dir_context *ctx, const char *name,
 	memcpy(de->name, name, namlen);
 	buf->used += reclen;
 
-	return 0;
+	return true;
 }
 
 static __be32 nfsd_buffered_readdir(struct file *file, struct svc_fh *fhp,
