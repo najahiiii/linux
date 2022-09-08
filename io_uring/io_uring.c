@@ -1169,13 +1169,8 @@ int __io_run_local_work(struct io_ring_ctx *ctx, bool locked)
 	int ret;
 	unsigned int loops = 1;
 
-	if (unlikely(ctx->submitter_task != current)) {
-		/* maybe this is before any submissions */
-		if (!ctx->submitter_task)
-			return 0;
-
+	if (unlikely(ctx->submitter_task != current))
 		return -EEXIST;
-	}
 
 	node = io_llist_xchg(&ctx->work_llist, &fake);
 	ret = 0;
@@ -1212,6 +1207,9 @@ int io_run_local_work(struct io_ring_ctx *ctx)
 {
 	bool locked;
 	int ret;
+
+	if (llist_empty(&ctx->work_llist))
+		return 0;
 
 	locked = mutex_trylock(&ctx->uring_lock);
 	ret = __io_run_local_work(ctx, locked);
@@ -1398,6 +1396,9 @@ static int io_iopoll_check(struct io_ring_ctx *ctx, long min)
 	int ret = 0;
 	unsigned long check_cq;
 
+	if (!io_allowed_run_tw(ctx))
+		return -EEXIST;
+
 	check_cq = READ_ONCE(ctx->check_cq);
 	if (unlikely(check_cq)) {
 		if (check_cq & BIT(IO_CHECK_CQ_OVERFLOW_BIT))
@@ -1430,24 +1431,21 @@ static int io_iopoll_check(struct io_ring_ctx *ctx, long min)
 		 */
 		if (wq_list_empty(&ctx->iopoll_list) ||
 		    io_task_work_pending(ctx)) {
+			u32 tail = ctx->cached_cq_tail;
+
 			if (!llist_empty(&ctx->work_llist))
 				__io_run_local_work(ctx, true);
+
 			if (task_work_pending(current) ||
 			    wq_list_empty(&ctx->iopoll_list)) {
-				u32 tail = ctx->cached_cq_tail;
-
 				mutex_unlock(&ctx->uring_lock);
-				ret = io_run_task_work();
+				io_run_task_work();
 				mutex_lock(&ctx->uring_lock);
-
-				if (ret < 0)
-					break;
-
-				/* some requests don't go through iopoll_list */
-				if (tail != ctx->cached_cq_tail ||
-				    wq_list_empty(&ctx->iopoll_list))
-					break;
 			}
+			/* some requests don't go through iopoll_list */
+			if (tail != ctx->cached_cq_tail ||
+			    wq_list_empty(&ctx->iopoll_list))
+				break;
 		}
 		ret = io_do_iopoll(ctx, !min);
 		if (ret < 0)
@@ -2381,6 +2379,9 @@ static int io_cqring_wait(struct io_ring_ctx *ctx, int min_events,
 	struct io_rings *rings = ctx->rings;
 	ktime_t timeout = KTIME_MAX;
 	int ret;
+
+	if (!io_allowed_run_tw(ctx))
+		return -EEXIST;
 
 	do {
 		/* always run at least 1 task work to process local work */
