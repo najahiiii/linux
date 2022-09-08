@@ -1109,7 +1109,7 @@ vmlinux-dirs	:= $(patsubst %/,%,$(filter %/, \
 		     $(core-y) $(core-m) $(drivers-y) $(drivers-m) \
 		     $(libs-y) $(libs-m)))
 
-vmlinux-alldirs	:= $(sort $(vmlinux-dirs) Documentation \
+vmlinux-alldirs	:= $(sort $(vmlinux-dirs) Documentation . \
 		     $(patsubst %/,%,$(filter %/, $(core-) \
 			$(drivers-) $(libs-))))
 
@@ -1202,7 +1202,7 @@ archprepare: outputmakefile archheaders archscripts scripts include/config/kerne
 
 prepare0: archprepare
 	$(Q)$(MAKE) $(build)=scripts/mod
-	$(Q)$(MAKE) $(build)=.
+	$(Q)$(MAKE) $(build)=. prepare
 
 # All the preparing..
 prepare: prepare0
@@ -1434,14 +1434,10 @@ endif
 
 # Build modules
 #
-# A module can be listed more than once in obj-m resulting in
-# duplicate lines in modules.order files.  Those are removed
-# using awk while concatenating to the final file.
 
-PHONY += modules
-modules: $(if $(KBUILD_BUILTIN),vmlinux) modules_check modules_prepare
+modules: $(if $(KBUILD_BUILTIN),vmlinux) modules_prepare
 
-cmd_modules_order = $(AWK) '!x[$$0]++' $(real-prereqs) > $@
+cmd_modules_order = cat $(real-prereqs) > $@
 
 modules.order: $(subdir-modorder) FORCE
 	$(call if_changed,modules_order)
@@ -1449,7 +1445,6 @@ modules.order: $(subdir-modorder) FORCE
 targets += modules.order
 
 # Target to prepare building external modules
-PHONY += modules_prepare
 modules_prepare: prepare
 	$(Q)$(MAKE) $(build)=scripts scripts/module.lds
 
@@ -1750,15 +1745,12 @@ help:
 	@echo  '  clean           - remove generated files in module directory only'
 	@echo  ''
 
-# no-op for external module builds
-PHONY += modules_prepare
-
 endif # KBUILD_EXTMOD
 
 # ---------------------------------------------------------------------------
 # Modules
 
-PHONY += modules modules_install
+PHONY += modules modules_install modules_prepare
 
 ifdef CONFIG_MODULES
 
@@ -1790,6 +1782,8 @@ modules modules_install:
 	@echo >&2 '***'
 	@exit 1
 
+KBUILD_MODULES :=
+
 endif # CONFIG_MODULES
 
 # Single targets
@@ -1816,18 +1810,12 @@ $(single-ko): single_modpost
 $(single-no-ko): descend
 	@:
 
-ifeq ($(KBUILD_EXTMOD),)
-# For the single build of in-tree modules, use a temporary file to avoid
-# the situation of modules_install installing an invalid modules.order.
-MODORDER := .modules.tmp
-endif
-
+# Remove MODORDER when done because it is not the real one.
 PHONY += single_modpost
 single_modpost: $(single-no-ko) modules_prepare
 	$(Q){ $(foreach m, $(single-ko), echo $(extmod_prefix)$m;) } > $(MODORDER)
 	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.modpost
-
-KBUILD_MODULES := 1
+	$(Q)rm -f $(MODORDER)
 
 export KBUILD_SINGLE_TARGETS := $(addprefix $(extmod_prefix), $(single-no-ko))
 
@@ -1835,10 +1823,6 @@ export KBUILD_SINGLE_TARGETS := $(addprefix $(extmod_prefix), $(single-no-ko))
 build-dirs := $(foreach d, $(build-dirs), \
 			$(if $(filter $(d)/%, $(KBUILD_SINGLE_TARGETS)), $(d)))
 
-endif
-
-ifndef CONFIG_MODULES
-KBUILD_MODULES :=
 endif
 
 # Handle descending into subdirectories listed in $(build-dirs)
