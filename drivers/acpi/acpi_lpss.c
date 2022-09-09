@@ -392,13 +392,6 @@ static const struct acpi_device_id acpi_lpss_device_ids[] = {
 
 #ifdef CONFIG_X86_INTEL_LPSS
 
-static int is_memory(struct acpi_resource *res, void *not_used)
-{
-	struct resource r;
-
-	return !acpi_dev_resource_memory(res, &r);
-}
-
 /* LPSS main clock device. */
 static struct platform_device *lpss_clk_dev;
 
@@ -659,29 +652,25 @@ static int acpi_lpss_create_device(struct acpi_device *adev,
 		return -ENOMEM;
 
 	INIT_LIST_HEAD(&resource_list);
-	ret = acpi_dev_get_resources(adev, &resource_list, is_memory, NULL);
+	ret = acpi_dev_get_memory_resources(adev, &resource_list);
 	if (ret < 0)
 		goto err_out;
 
-	list_for_each_entry(rentry, &resource_list, node)
-		if (resource_type(rentry->res) == IORESOURCE_MEM) {
-			if (dev_desc->prv_size_override)
-				pdata->mmio_size = dev_desc->prv_size_override;
-			else
-				pdata->mmio_size = resource_size(rentry->res);
-			pdata->mmio_base = ioremap(rentry->res->start,
-						   pdata->mmio_size);
-			break;
-		}
+	rentry = list_first_entry_or_null(&resource_list, struct resource_entry, node);
+	if (rentry) {
+		if (dev_desc->prv_size_override)
+			pdata->mmio_size = dev_desc->prv_size_override;
+		else
+			pdata->mmio_size = resource_size(rentry->res);
+		pdata->mmio_base = ioremap(rentry->res->start, pdata->mmio_size);
+	}
 
 	acpi_dev_free_resource_list(&resource_list);
 
 	if (!pdata->mmio_base) {
 		/* Avoid acpi_bus_attach() instantiating a pdev for this dev. */
 		adev->pnp.type.platform_id = 0;
-		/* Skip the device, but continue the namespace scan. */
-		ret = 0;
-		goto err_out;
+		goto out_free;
 	}
 
 	pdata->adev = adev;
@@ -692,11 +681,8 @@ static int acpi_lpss_create_device(struct acpi_device *adev,
 
 	if (dev_desc->flags & LPSS_CLK) {
 		ret = register_device_clock(adev, pdata);
-		if (ret) {
-			/* Skip the device, but continue the namespace scan. */
-			ret = 0;
-			goto err_out;
-		}
+		if (ret)
+			goto out_free;
 	}
 
 	/*
@@ -708,15 +694,19 @@ static int acpi_lpss_create_device(struct acpi_device *adev,
 
 	adev->driver_data = pdata;
 	pdev = acpi_create_platform_device(adev, dev_desc->properties);
-	if (!IS_ERR_OR_NULL(pdev)) {
-		acpi_lpss_create_device_links(adev, pdev);
-		return 1;
+	if (IS_ERR_OR_NULL(pdev)) {
+		adev->driver_data = NULL;
+		ret = PTR_ERR(pdev);
+		goto err_out;
 	}
 
-	ret = PTR_ERR(pdev);
-	adev->driver_data = NULL;
+	acpi_lpss_create_device_links(adev, pdev);
+	return 1;
 
- err_out:
+out_free:
+	/* Skip the device, but continue the namespace scan */
+	ret = 0;
+err_out:
 	kfree(pdata);
 	return ret;
 }
