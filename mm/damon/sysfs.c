@@ -2259,11 +2259,20 @@ static int damon_sysfs_set_targets(struct damon_ctx *ctx,
 static struct damos *damon_sysfs_mk_scheme(
 		struct damon_sysfs_scheme *sysfs_scheme)
 {
-	struct damon_sysfs_access_pattern *pattern =
+	struct damon_sysfs_access_pattern *access_pattern =
 		sysfs_scheme->access_pattern;
 	struct damon_sysfs_quotas *sysfs_quotas = sysfs_scheme->quotas;
 	struct damon_sysfs_weights *sysfs_weights = sysfs_quotas->weights;
 	struct damon_sysfs_watermarks *sysfs_wmarks = sysfs_scheme->watermarks;
+
+	struct damos_access_pattern pattern = {
+		.min_sz_region = access_pattern->sz->min,
+		.max_sz_region = access_pattern->sz->max,
+		.min_nr_accesses = access_pattern->nr_accesses->min,
+		.max_nr_accesses = access_pattern->nr_accesses->max,
+		.min_age_region = access_pattern->age->min,
+		.max_age_region = access_pattern->age->max,
+	};
 	struct damos_quota quota = {
 		.ms = sysfs_quotas->ms,
 		.sz = sysfs_quotas->sz,
@@ -2280,10 +2289,8 @@ static struct damos *damon_sysfs_mk_scheme(
 		.low = sysfs_wmarks->low,
 	};
 
-	return damon_new_scheme(pattern->sz->min, pattern->sz->max,
-			pattern->nr_accesses->min, pattern->nr_accesses->max,
-			pattern->age->min, pattern->age->max,
-			sysfs_scheme->action, &quota, &wmarks);
+	return damon_new_scheme(&pattern, sysfs_scheme->action, &quota,
+			&wmarks);
 }
 
 static int damon_sysfs_set_schemes(struct damon_ctx *ctx,
@@ -2309,7 +2316,7 @@ static void damon_sysfs_before_terminate(struct damon_ctx *ctx)
 {
 	struct damon_target *t, *next;
 
-	if (ctx->ops.id != DAMON_OPS_VADDR && ctx->ops.id != DAMON_OPS_FVADDR)
+	if (!damon_target_has_pid(ctx))
 		return;
 
 	mutex_lock(&ctx->kdamond_lock);
@@ -2657,23 +2664,18 @@ static void damon_sysfs_kdamonds_rm_dirs(struct damon_sysfs_kdamonds *kdamonds)
 	kdamonds->kdamonds_arr = NULL;
 }
 
-static int damon_sysfs_nr_running_ctxs(struct damon_sysfs_kdamond **kdamonds,
+static bool damon_sysfs_kdamonds_busy(struct damon_sysfs_kdamond **kdamonds,
 		int nr_kdamonds)
 {
-	int nr_running_ctxs = 0;
 	int i;
 
 	for (i = 0; i < nr_kdamonds; i++) {
-		struct damon_ctx *ctx = kdamonds[i]->damon_ctx;
-
-		if (!ctx)
-			continue;
-		mutex_lock(&ctx->kdamond_lock);
-		if (ctx->kdamond)
-			nr_running_ctxs++;
-		mutex_unlock(&ctx->kdamond_lock);
+		if (damon_sysfs_kdamond_running(kdamonds[i]) ||
+		    damon_sysfs_cmd_request.kdamond == kdamonds[i])
+			return true;
 	}
-	return nr_running_ctxs;
+
+	return false;
 }
 
 static int damon_sysfs_kdamonds_add_dirs(struct damon_sysfs_kdamonds *kdamonds,
@@ -2682,14 +2684,8 @@ static int damon_sysfs_kdamonds_add_dirs(struct damon_sysfs_kdamonds *kdamonds,
 	struct damon_sysfs_kdamond **kdamonds_arr, *kdamond;
 	int err, i;
 
-	if (damon_sysfs_nr_running_ctxs(kdamonds->kdamonds_arr, kdamonds->nr))
+	if (damon_sysfs_kdamonds_busy(kdamonds->kdamonds_arr, kdamonds->nr))
 		return -EBUSY;
-
-	for (i = 0; i < kdamonds->nr; i++) {
-		if (damon_sysfs_cmd_request.kdamond ==
-				kdamonds->kdamonds_arr[i])
-			return -EBUSY;
-	}
 
 	damon_sysfs_kdamonds_rm_dirs(kdamonds);
 	if (!nr_kdamonds)
