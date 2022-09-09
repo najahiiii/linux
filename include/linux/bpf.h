@@ -280,14 +280,33 @@ static inline void check_and_init_map_value(struct bpf_map *map, void *dst)
 	}
 }
 
-/* copy everything but bpf_spin_lock and bpf_timer. There could be one of each. */
-static inline void copy_map_value(struct bpf_map *map, void *dst, void *src)
+/* memcpy that is used with 8-byte aligned pointers, power-of-8 size and
+ * forced to use 'long' read/writes to try to atomically copy long counters.
+ * Best-effort only.  No barriers here, since it _will_ race with concurrent
+ * updates from BPF programs. Called from bpf syscall and mostly used with
+ * size 8 or 16 bytes, so ask compiler to inline it.
+ */
+static inline void bpf_long_memcpy(void *dst, const void *src, u32 size)
+{
+	const long *lsrc = src;
+	long *ldst = dst;
+
+	size /= sizeof(long);
+	while (size--)
+		*ldst++ = *lsrc++;
+}
+
+/* copy everything but bpf_spin_lock, bpf_timer, and kptrs. There could be one of each. */
+static inline void __copy_map_value(struct bpf_map *map, void *dst, void *src, bool long_memcpy)
 {
 	u32 curr_off = 0;
 	int i;
 
 	if (likely(!map->off_arr)) {
-		memcpy(dst, src, map->value_size);
+		if (long_memcpy)
+			bpf_long_memcpy(dst, src, round_up(map->value_size, 8));
+		else
+			memcpy(dst, src, map->value_size);
 		return;
 	}
 
@@ -299,6 +318,36 @@ static inline void copy_map_value(struct bpf_map *map, void *dst, void *src)
 	}
 	memcpy(dst + curr_off, src + curr_off, map->value_size - curr_off);
 }
+
+static inline void copy_map_value(struct bpf_map *map, void *dst, void *src)
+{
+	__copy_map_value(map, dst, src, false);
+}
+
+static inline void copy_map_value_long(struct bpf_map *map, void *dst, void *src)
+{
+	__copy_map_value(map, dst, src, true);
+}
+
+static inline void zero_map_value(struct bpf_map *map, void *dst)
+{
+	u32 curr_off = 0;
+	int i;
+
+	if (likely(!map->off_arr)) {
+		memset(dst, 0, map->value_size);
+		return;
+	}
+
+	for (i = 0; i < map->off_arr->cnt; i++) {
+		u32 next_off = map->off_arr->field_off[i];
+
+		memset(dst + curr_off, 0, next_off - curr_off);
+		curr_off += map->off_arr->field_sz[i];
+	}
+	memset(dst + curr_off, 0, map->value_size - curr_off);
+}
+
 void copy_map_value_locked(struct bpf_map *map, void *dst, void *src,
 			   bool lock_src);
 void bpf_timer_cancel_and_free(void *timer);
@@ -727,10 +776,14 @@ enum bpf_cgroup_storage_type {
  */
 #define MAX_BPF_FUNC_REG_ARGS 5
 
+/* The argument is a structure. */
+#define BTF_FMODEL_STRUCT_ARG		BIT(0)
+
 struct btf_func_model {
 	u8 ret_size;
 	u8 nr_args;
 	u8 arg_size[MAX_BPF_FUNC_ARGS];
+	u8 arg_flags[MAX_BPF_FUNC_ARGS];
 };
 
 /* Restore arguments before returning from trampoline to let original function
@@ -1823,22 +1876,6 @@ int bpf_get_file_flag(int flags);
 int bpf_check_uarg_tail_zero(bpfptr_t uaddr, size_t expected_size,
 			     size_t actual_size);
 
-/* memcpy that is used with 8-byte aligned pointers, power-of-8 size and
- * forced to use 'long' read/writes to try to atomically copy long counters.
- * Best-effort only.  No barriers here, since it _will_ race with concurrent
- * updates from BPF programs. Called from bpf syscall and mostly used with
- * size 8 or 16 bytes, so ask compiler to inline it.
- */
-static inline void bpf_long_memcpy(void *dst, const void *src, u32 size)
-{
-	const long *lsrc = src;
-	long *ldst = dst;
-
-	size /= sizeof(long);
-	while (size--)
-		*ldst++ = *lsrc++;
-}
-
 /* verify correctness of eBPF program */
 int bpf_check(struct bpf_prog **fp, union bpf_attr *attr, bpfptr_t uattr);
 
@@ -1940,13 +1977,22 @@ int btf_distill_func_proto(struct bpf_verifier_log *log,
 			   const char *func_name,
 			   struct btf_func_model *m);
 
+struct bpf_kfunc_arg_meta {
+	u64 r0_size;
+	bool r0_rdonly;
+	int ref_obj_id;
+	u32 flags;
+};
+
 struct bpf_reg_state;
 int btf_check_subprog_arg_match(struct bpf_verifier_env *env, int subprog,
 				struct bpf_reg_state *regs);
+int btf_check_subprog_call(struct bpf_verifier_env *env, int subprog,
+			   struct bpf_reg_state *regs);
 int btf_check_kfunc_arg_match(struct bpf_verifier_env *env,
 			      const struct btf *btf, u32 func_id,
 			      struct bpf_reg_state *regs,
-			      u32 kfunc_flags);
+			      struct bpf_kfunc_arg_meta *meta);
 int btf_prepare_func_args(struct bpf_verifier_env *env, int subprog,
 			  struct bpf_reg_state *reg);
 int btf_check_type_match(struct bpf_verifier_log *log, const struct bpf_prog *prog,

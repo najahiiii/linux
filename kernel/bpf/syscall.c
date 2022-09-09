@@ -598,7 +598,7 @@ void bpf_map_free_kptrs(struct bpf_map *map, void *map_value)
 		if (off_desc->type == BPF_KPTR_UNREF) {
 			u64 *p = (u64 *)btf_id_ptr;
 
-			WRITE_ONCE(p, 0);
+			WRITE_ONCE(*p, 0);
 			continue;
 		}
 		old_ptr = xchg(btf_id_ptr, 0);
@@ -1049,7 +1049,8 @@ static int map_check_btf(struct bpf_map *map, const struct btf *btf,
 		}
 		if (map->map_type != BPF_MAP_TYPE_HASH &&
 		    map->map_type != BPF_MAP_TYPE_LRU_HASH &&
-		    map->map_type != BPF_MAP_TYPE_ARRAY) {
+		    map->map_type != BPF_MAP_TYPE_ARRAY &&
+		    map->map_type != BPF_MAP_TYPE_PERCPU_ARRAY) {
 			ret = -EOPNOTSUPP;
 			goto free_map_tab;
 		}
