@@ -16582,9 +16582,10 @@ rtl8125_test_phy_ocp_v5(struct rtl8125_private *tp)
 
         rtl8125_wait_phy_state_ready(tp, HW_PHY_STATUS_INI, 5000000);
 
+#ifndef ENABLE_USE_FIRMWARE_FILE
         if (tp->mcfg == CFG_METHOD_10)
                 rtl8125_set_phy_mcu_8125d_1_efuse(tp->dev);
-
+#endif
         rtl8125_set_eth_phy_ocp_bit(tp, 0xA468, BIT_0);
 
         rtl8125_clear_phy_ups_reg(tp->dev);
